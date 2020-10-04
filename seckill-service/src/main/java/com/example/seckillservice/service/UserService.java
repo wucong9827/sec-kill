@@ -14,4 +14,20 @@ public interface UserService {
      * @throws Exception
      */
     String getVerifyHash(Integer sid, Integer userId) throws Exception;
+
+    /**
+     * 添加用户访问次数
+     * @param userId
+     * @return
+     * @throws Exception
+     */
+    public int addUserCount(Integer userId);
+
+    /**
+     * 检查用户是否被禁
+     * @param userId
+     * @return
+     */
+    public boolean getUserIsBanned(Integer userId);
+
 }

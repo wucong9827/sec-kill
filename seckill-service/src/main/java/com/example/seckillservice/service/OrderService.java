@@ -32,5 +32,16 @@ public interface OrderService {
      */
      int createPessimisticOrder(int sid);
 
+    /**
+     * 创建正确订单：验证库存 + 用户 + 时间 合法性 + 下单乐观锁
+     * @param sid
+     * @param userId
+     * @param verifyHash
+     * @return
+     * @throws Exception
+     */
+    int createVerifiedOrder(int sid, int userId, String verifyHash) throws Exception;
+
+
 
 }
