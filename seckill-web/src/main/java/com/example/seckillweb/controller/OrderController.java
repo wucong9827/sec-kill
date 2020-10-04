@@ -1,5 +1,6 @@
 package com.example.seckillweb.controller;
 
+import com.alibaba.fastjson.JSONObject;
 import com.example.seckillservice.service.OrderService;
 import com.example.seckillservice.service.StockService;
 import com.example.seckillservice.service.UserService;
@@ -275,7 +276,7 @@ public class OrderController {
             // 删除库存缓存数据
             stockService.delStockCountCache(sid);
             // 延迟双删除 缓存，目的：达到最终的缓存一致
-            //cachedThreadPool.execute(new DelCacheByThread(sid));
+            cachedThreadPool.execute(new DelCacheByThread(sid));
             LOGGER.info("假设延迟双删失败：");
             // 假设上述再次删除缓存没成功，通知消息队列进行删除缓存
             sendToDelCache(String.valueOf(sid));
@@ -288,6 +289,63 @@ public class OrderController {
     }
 
     /**
+     * V 0.4
+     * 下单接口：异步处理订单
+     * @param sid
+     * @param userId
+     * @return
+     */
+    @RequestMapping(value = "/createUserOrderWithMq", method = {RequestMethod.GET})
+    public String createUserOrderWithMq(@RequestParam(value = "sid") Integer sid,
+                                        @RequestParam(value = "userId") Integer userId) {
+        try {
+            // 检查缓存中该用户是否已经下单过
+//            Boolean hasOrder = orderService.checkUserOrderInfoInCache(sid, userId);
+//            if (hasOrder != null && hasOrder) {
+//                LOGGER.info("该用户已经抢购过");
+//                return "你已经抢购过了，不要太贪心.....";
+//            }
+            // 没有下单的用户，检查缓存中是否还有库存
+            LOGGER.info("没有抢购过，检查缓存中商品是否还有库存");
+            int count = stockService.getStockCount(sid);
+            if (count == 0) {
+                return "秒杀请求失败，库存不足.....";
+            }
+            // 有库存，则将用户id和商品id封装为消息体传给消息队列处理
+            // 注意这里的有库存和已经下单都是缓存中的结论，存在不可靠性，在消息队列中会查表再次验证
+            LOGGER.info("库存剩余数量：[{}]", count);
+            JSONObject object = new JSONObject();
+            object.put("sid", sid);
+            object.put("userId", userId);
+            sendToOrderQueue(object.toJSONString());
+            return "秒杀请求提交成功";
+        } catch (Exception e) {
+            LOGGER.error("下单接口：异步处理订单异常：[{}]", e.getMessage());
+            return "秒杀请求失败，服务器正忙.....";
+        }
+    }
+
+    /**
+     * 检查缓存中用户是否已经生成订单
+     * @param sid
+     * @return
+     */
+    @RequestMapping(value = "/checkOrderByUserIdInCache", method = {RequestMethod.GET})
+    public String checkOrderByUserIdInCache(@RequestParam(value = "sid") Integer sid,
+                                            @RequestParam(value = "userId") Integer userId) {
+        // 检查缓存中该用户是否已经下单过
+        try {
+            Boolean hasOrder = orderService.checkUserOrderInfoInCache(sid, userId);
+            if (hasOrder != null && hasOrder) {
+                return "恭喜您，已经抢购成功！";
+            }
+        } catch (Exception e) {
+            LOGGER.error("检查订单异常：[{}]", e.getMessage());
+        }
+        return "很抱歉，你的订单尚未生成，继续排队。";
+    }
+
+    /**
      * 向消息队列delCache发送消息
      * @param message
      */
@@ -296,6 +354,14 @@ public class OrderController {
         rabbitTemplate.convertAndSend("delCache", message);
     }
 
+    /**
+     * 向OrderQueue消息队列中发送消息
+     * @param message
+     */
+    private void sendToOrderQueue(String message) {
+        LOGGER.info("去通知消息队列开始下单业务：[{}]", message);
+        rabbitTemplate.convertAndSend("orderQueue", message);
+    }
 
 
     /**

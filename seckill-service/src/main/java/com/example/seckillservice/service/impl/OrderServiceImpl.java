@@ -4,7 +4,6 @@ import com.example.seckilldao.dao.Stock;
 import com.example.seckilldao.dao.StockOrder;
 import com.example.seckilldao.dao.User;
 import com.example.seckilldao.mapper.OrderMapper;
-import com.example.seckilldao.mapper.StockMapper;
 import com.example.seckilldao.mapper.UserMapper;
 import com.example.seckilldao.util.CacheKey;
 import com.example.seckillservice.service.OrderService;
@@ -18,7 +17,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.SimpleDateFormat;
-import java.util.Date;
 
 /**
  * @author : wucong
@@ -85,7 +83,6 @@ public class OrderServiceImpl implements OrderService {
         //验证秒杀时间
         LOGGER.info("当前的时间为： [{}]",
                 new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(System.currentTimeMillis()));
-
         //验证hash验证值
         String hashKey = CacheKey.HASH_KEY.getKey() + "_" + sid + "_" + userId;
         LOGGER.info("HashKey : [{}]", hashKey);
@@ -118,6 +115,44 @@ public class OrderServiceImpl implements OrderService {
         LOGGER.info("success create Order");
 
         return stock.getCount() - (stock.getSale() + 1);
+    }
+
+
+    @Override
+    public Boolean checkUserOrderInfoInCache(Integer sid, Integer userId) throws Exception {
+        String hashKey = CacheKey.USER_HAS_ORDER.getKey() + "_" + sid;
+        LOGGER.info("检查用户Id：[{}] 是否抢购过商品Id：[{}] 检查Key：[{}]", userId, sid, hashKey);
+        return stringRedisTemplate.opsForSet().isMember(hashKey, userId);
+    }
+
+    @Override
+    public void createOrderByMq(Integer sid, Integer userId) throws Exception {
+        // 模拟多个用户同时抢购，导致消息队列排队等候5秒
+       // Thread.sleep(5000);
+
+        Stock stock = checkStock(sid);
+        //乐观锁更新库存
+        boolean updateStock = saleStockOptimistic(stock);
+        if (!updateStock) {
+            LOGGER.warn("扣减库存失败，库存已经为0");
+            return;
+        }
+        LOGGER.info("扣减库存成功，剩余库存：[{}]", stock.getCount() - stock.getSale() - 1);
+        stockService.delStockCountCache(sid);
+        LOGGER.info("删除库存缓存");
+
+        // 创建订单
+        LOGGER.info("写入订单数据-->数据库");
+        createOrderWithUserInfoInDB(userId, stock);
+        LOGGER.info("写入订单数据-->缓存");
+        createOrderWithUserInfoInCache(sid, userId);
+        LOGGER.info("下单完成");
+    }
+
+    private Long createOrderWithUserInfoInCache(Integer sid, Integer userId) {
+        String hashKey = CacheKey.USER_HAS_ORDER.getKey() + "_" + sid;
+        LOGGER.info("写入用户订单数据Set：[{}] [{}]", hashKey, userId);
+        return stringRedisTemplate.opsForSet().add(hashKey, userId.toString());
     }
 
     /**
@@ -170,12 +205,10 @@ public class OrderServiceImpl implements OrderService {
      * 乐观锁库存更新
      * @param stock
      */
-    private void saleStockOptimistic(Stock stock) {
-        LOGGER.info("乐观锁库存更新");
+    private boolean saleStockOptimistic(Stock stock) {
+        LOGGER.info("查询数据库，尝试更新库存");
         int count = stockService.updateStockByOptimistic(stock);
-        if (count != 1) {
-            throw new RuntimeException("库存更新失败");
-        }
+        return count != 0;
     }
 
     /**

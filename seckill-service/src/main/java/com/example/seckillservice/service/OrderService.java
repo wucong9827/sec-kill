@@ -42,6 +42,22 @@ public interface OrderService {
      */
     int createVerifiedOrder(int sid, int userId, String verifyHash) throws Exception;
 
+    /**
+     * 检查缓存中用户是否已经有订单
+     * @param sid
+     * @param userId
+     * @return
+     * @throws Exception
+     */
+    Boolean checkUserOrderInfoInCache(Integer sid, Integer userId) throws Exception;
+
+    /**
+     * 创建正确订单：验证库存 + 下单乐观锁 + 更新订单信息到缓存
+     * @param sid
+     * @param userId
+     * @throws Exception
+     */
+    void createOrderByMq(Integer sid, Integer userId) throws Exception;
 
 
 }
