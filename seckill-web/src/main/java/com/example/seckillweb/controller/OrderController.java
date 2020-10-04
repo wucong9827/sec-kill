@@ -5,6 +5,7 @@ import com.example.seckillservice.service.StockService;
 import com.example.seckillservice.service.UserService;
 import com.google.common.util.concurrent.RateLimiter;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,6 +38,9 @@ public class OrderController {
      */
     private final RateLimiter rateLimiter = RateLimiter.create(10);
 
+    @Autowired
+    private AmqpTemplate rabbitTemplate;
+
     /**
      * 开设一个线程池，在线程中删除key，
      * 而不是使用Thread.sleep进行等待，这样会阻塞用户的请求。
@@ -49,7 +53,9 @@ public class OrderController {
             TimeUnit.SECONDS,
             new SynchronousQueue<Runnable>());
 
-    // 延时时间：预估读数据库数据业务逻辑的耗时，用来做缓存再删除
+    /**
+     * 延时时间：预估读数据库数据业务逻辑的耗时，用来做缓存再删除
+     */
     private static final int DELAY_MILLSECONDS = 1000;
 
     /**
@@ -269,9 +275,10 @@ public class OrderController {
             // 删除库存缓存数据
             stockService.delStockCountCache(sid);
             // 延迟双删除 缓存，目的：达到最终的缓存一致
-            cachedThreadPool.execute(new DelCacheByThread(sid));
+            //cachedThreadPool.execute(new DelCacheByThread(sid));
+            LOGGER.info("假设延迟双删失败：");
             // 假设上述再次删除缓存没成功，通知消息队列进行删除缓存
-
+            sendToDelCache(String.valueOf(sid));
         } catch (Exception e) {
             LOGGER.error("购买失败：[{}]", e.getMessage());
             return "购买失败，库存不足";
@@ -279,6 +286,17 @@ public class OrderController {
         LOGGER.info("购买成功，剩余库存为: [{}]", count);
         return String.format("购买成功，剩余库存为：%d", count);
     }
+
+    /**
+     * 向消息队列delCache发送消息
+     * @param message
+     */
+    private void sendToDelCache(String message){
+        LOGGER.info("这就去通知消息队列开始重试删除缓存：[{}]", message);
+        rabbitTemplate.convertAndSend("delCache", message);
+    }
+
+
 
     /**
      * 延迟双删 线程
